@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+    <!--
+        Add suppression rules here to silence known-acceptable findings.
+        Example:
+        <suppress>
+            <notes>False positive — internal-only component, not exposed to network.</notes>
+            <cve>CVE-YYYY-NNNNN</cve>
+        </suppress>
+    -->
+</suppressions>
