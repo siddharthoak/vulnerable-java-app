@@ -77,26 +77,23 @@ jobs:
           severity: 'CRITICAL,HIGH'
           exit-code: '0'
 
-      # -- 8. Clear stale Grype DB -----------------------------------------------
-      # Removes any locally cached Grype vulnerability database so the scan-action
-      # always downloads a fresh one. A stale DB (persisted on self-hosted runners
-      # or via a non-rotating Actions cache) causes Grype to abort with
-      # "the vulnerability database was built N weeks ago (max allowed age is 5 days)".
-      - name: Clear stale Grype DB cache
+      # -- 8. Grype --------------------------------------------------------------
+      # anchore/scan-action@v4 dropped the output-file parameter, so there is no
+      # way to write JSON to a known path via the action. Running the Grype CLI
+      # directly gives full control: fresh DB via `grype db update`, JSON written
+      # to grype-report.json, and continue-on-error so a high-severity exit (1)
+      # does not skip the upload step.
+      - name: Install Grype and update DB
         if: always()
-        run: rm -rf ~/.cache/grype
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
+            | sh -s -- -b /usr/local/bin
+          grype db update
 
-      # -- 9. Grype --------------------------------------------------------------
       - name: Grype scan
         if: always()
-        uses: anchore/scan-action@v4
-        with:
-          path: '.'
-          fail-build: 'true'
-          severity-cutoff: high
-          output-file: grype-report.json
-          output-format: json
-          cache-db: false
+        continue-on-error: true
+        run: grype dir:. -o json --file grype-report.json --fail-on high
 
       # -- 10. Upload all reports as a single artifact ---------------------------
       - name: Upload vulnerability reports
