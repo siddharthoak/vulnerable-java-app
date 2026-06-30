@@ -29,12 +29,7 @@ jobs:
           distribution: temurin
           java-version: '8'
 
-      # -- 3. Date (used for OWASP DC cache key daily rotation) ------------------
-      - name: Get date
-        id: date
-        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
-
-      # -- 4. Cache Maven local repository ---------------------------------------
+      # -- 3. Cache Maven local repository ---------------------------------------
       - name: Cache Maven repository
         uses: actions/cache@v4
         with:
@@ -43,42 +38,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-maven-
 
-      # -- 5. Build --------------------------------------------------------------
+      # -- 4. Build --------------------------------------------------------------
       - name: Build with Maven
         run: mvn clean install -DskipTests --batch-mode --no-transfer-progress
 
-      # -- 6. Cache OWASP DC NVD data --------------------------------------------
-      # Rotates daily so vulnerability data stays fresh without re-downloading
-      # the full NVD feed on every run.
-      - name: Cache OWASP DC data
-        uses: actions/cache@v4
-        with:
-          path: ~/.dependency-check
-          key: owasp-dc-${{ runner.os }}-${{ steps.date.outputs.date }}
-          restore-keys: owasp-dc-${{ runner.os }}-
-
-      # -- 7. OWASP Dependency-Check (Maven plugin) ------------------------------
-      # Previously used dependency-check/Dependency-Check_Action (Docker-based).
-      # That action inherits the host runner's JAVA_HOME via `-e "JAVA_HOME"` in
-      # the docker run call, but the host path does not exist inside the container,
-      # causing "JAVA_HOME is not defined correctly". Switching to the Maven plugin
-      # avoids the Docker layer entirely: it runs in-process using the Java already
-      # installed by setup-java above.
-      #
-      # continue-on-error: true so that a CVE-triggered non-zero exit (CVSS >= 7)
-      # does not skip the Trivy/Grype steps that follow.
-      - name: OWASP Dependency-Check
-        continue-on-error: true
-        run: |
-          mvn --batch-mode --no-transfer-progress \
-            org.owasp:dependency-check-maven:check \
-            -DfailBuildOnCVSS=7 \
-            -Dformat=HTML,JSON,SARIF \
-            -DoutputDirectory=dependency-check-report \
-            -DsuppressionFile=dependency-check-suppression.xml \
-            -DenableRetired=true
-
-      # -- 8a. Trivy -- console table (informational, no fail) -------------------
+      # -- 5. Trivy -- console table (informational, no fail) --------------------
       - name: Trivy -- console summary
         if: always()
         uses: aquasecurity/trivy-action@master
@@ -89,7 +53,7 @@ jobs:
           severity: 'CRITICAL,HIGH,MEDIUM'
           exit-code: '0'
 
-      # -- 8b. Trivy -- JSON report (fails on CRITICAL or HIGH) ------------------
+      # -- 6. Trivy -- JSON report (fails on CRITICAL or HIGH) ------------------
       - name: Trivy -- JSON report
         if: always()
         uses: aquasecurity/trivy-action@master
@@ -101,16 +65,28 @@ jobs:
           severity: 'CRITICAL,HIGH'
           exit-code: '1'
 
-      # -- 9. Clear stale Grype DB -----------------------------------------------
-      # anchore/scan-action uses cache-db: true by default, keyed by DB schema
-      # version (not by date). Once restored, a DB older than 5 days causes Grype
-      # to abort with "the vulnerability database was built N weeks ago". Deleting
-      # ~/.cache/grype before the scan forces a fresh download every run.
+      # -- 7. Trivy -- SARIF for GitHub Code Scanning ----------------------------
+      - name: Trivy -- SARIF report
+        if: always()
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: '.'
+          format: sarif
+          output: trivy-report.sarif
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+
+      # -- 8. Clear stale Grype DB -----------------------------------------------
+      # Removes any locally cached Grype vulnerability database so the scan-action
+      # always downloads a fresh one. A stale DB (persisted on self-hosted runners
+      # or via a non-rotating Actions cache) causes Grype to abort with
+      # "the vulnerability database was built N weeks ago (max allowed age is 5 days)".
       - name: Clear stale Grype DB cache
         if: always()
         run: rm -rf ~/.cache/grype
 
-      # -- 10. Grype -------------------------------------------------------------
+      # -- 9. Grype --------------------------------------------------------------
       - name: Grype scan
         if: always()
         uses: anchore/scan-action@v4
@@ -122,31 +98,26 @@ jobs:
           output-format: json
           cache-db: false
 
-      # -- 11. Upload all reports as a single artifact ---------------------------
+      # -- 10. Upload all reports as a single artifact ---------------------------
       - name: Upload vulnerability reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: vulnerability-reports
           path: |
-            dependency-check-report/dependency-check-report.html
-            dependency-check-report/dependency-check-report.json
-            dependency-check-report/dependency-check-report.sarif
             trivy-report.json
             grype-report.json
           if-no-files-found: warn
 
-      # -- 12. Upload Dependency-Check SARIF to GitHub Code Scanning -------------
-      # Guarded with hashFiles so the step is silently skipped when the OWASP DC
-      # step did not produce the SARIF file (e.g. scan aborted before reporting).
+      # -- 11. Upload Trivy SARIF to GitHub Code Scanning -----------------------
       - name: Upload SARIF to Code Scanning
-        if: always() && hashFiles('dependency-check-report/dependency-check-report.sarif') != ''
+        if: always() && hashFiles('trivy-report.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: dependency-check-report/dependency-check-report.sarif
-          category: dependency-check
+          sarif_file: trivy-report.sarif
+          category: trivy
 
-      # -- 13. Post PR comment with scanner summary ------------------------------
+      # -- 12. Post PR comment with scanner summary ------------------------------
       - name: Post PR comment
         if: always() && github.event_name == 'pull_request'
         uses: actions/github-script@v7
@@ -205,12 +176,10 @@ jobs:
 
             | Scanner | Critical | High | Medium | Low | Status |
             |---------|:--------:|:----:|:------:|:---:|--------|
-            | OWASP Dependency-Check | -- | -- | -- | -- | See artifact |
             | Trivy | **${trivyCounts.CRITICAL}** | **${trivyCounts.HIGH}** | ${trivyCounts.MEDIUM} | ${trivyCounts.LOW} | ${trivyStatus} |
             | Grype | **${grypeCounts.CRITICAL}** | **${grypeCounts.HIGH}** | ${grypeCounts.MEDIUM} | ${grypeCounts.LOW} | ${grypeStatus} |
 
-            > 📦 Full reports (HTML, JSON, SARIF) are available in the **[vulnerability-reports](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})** artifact.
-            > OWASP Dependency-Check counts are in the downloaded artifact -- the JSON is too large to parse inline.`;
+            > 📦 Full reports (JSON) are available in the **[vulnerability-reports](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})** artifact.`;
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
