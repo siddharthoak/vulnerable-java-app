@@ -1,7 +1,7 @@
 package com.neurealm.vulndemo;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.struts2.dispatcher.ng.filter.StrutsPrepareAndExecuteFilter;
+import org.apache.struts2.dispatcher.filter.StrutsFilter;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
 import org.apache.commons.fileupload.FileItem;
@@ -52,7 +52,7 @@ public class WebHandler {
      * Referencing the filter class activates the struts2-core dependency.
      */
     public Class<?> getStrutsFilterClass() {
-        return StrutsPrepareAndExecuteFilter.class;
+        return StrutsFilter.class;
     }
 
     /**
