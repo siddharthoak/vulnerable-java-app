@@ -36,6 +36,11 @@ public class WebHandler {
      * The ClassPathResource usage here activates the spring-core dependency.
      */
     public String readConfig(String resourcePath) {
+        // Reject empty, absolute, or parent-traversing paths before touching the classpath.
+        if (resourcePath == null || resourcePath.trim().isEmpty()
+                || resourcePath.startsWith("/") || resourcePath.contains("..")) {
+            throw new IllegalArgumentException("Invalid resource path: " + resourcePath);
+        }
         try {
             Resource resource = new ClassPathResource(resourcePath);
             InputStream stream = resource.getInputStream();
